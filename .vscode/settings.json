@@ -1,0 +1,8 @@
+{
+  "liveServer.settings.root": "/",
+  "liveServer.settings.file": "debug.html",
+  "liveServer.settings.port": 5500,
+  "liveServer.settings.CustomBrowser": "chrome",
+  "liveServer.settings.NoBrowser": false,
+  "liveServer.settings.donotShowInfoMsg": true
+}
