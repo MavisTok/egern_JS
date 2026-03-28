@@ -230,11 +230,26 @@ function referer(host) {
   return { ...COMMON_HEADERS, 'Referer': `http://${host}/main.html` };
 }
 
+/** 兼容 Egern/浏览器不同响应格式：text() 方法 / text 字符串属性 / body 属性 */
+async function respBody(resp) {
+  if (typeof resp === 'string') return resp;
+  if (typeof resp.text === 'function') return String(await resp.text());
+  if (typeof resp.text === 'string')   return resp.text;
+  if (typeof resp.body === 'string')   return resp.body;
+  if (resp.data != null)               return String(resp.data);
+  return '';
+}
+
+/** 带缓存破坏的 GET，统一走此方法 */
+async function httpGet(ctx, url, headers) {
+  const sep = url.includes('?') ? '&' : '?';
+  const resp = await ctx.http.get(`${url}${sep}_t=${Date.now()}`, { headers });
+  return respBody(resp);
+}
+
 /** GET 请求，若返回 HTML 或非 JSON 则抛出登录错误 */
 async function fhGet(ctx, cfg, path) {
-  const sep = path.includes('?') ? '&' : '?';
-  const resp = await ctx.http.get(`http://${cfg.host}${path}${sep}_t=${Date.now()}`, { headers: referer(cfg.host) });
-  const text = await resp.text();
+  const text = await httpGet(ctx, `http://${cfg.host}${path}`, referer(cfg.host));
   const t = text.trim();
   if (t.startsWith('<') || t === '' || t === '0') throw new Error('AUTH_REQUIRED');
   try {
@@ -261,7 +276,7 @@ async function fhPost(ctx, cfg, path, method, dataObj, sid) {
     },
     body,
   });
-  const text = await resp.text();
+  const text = await respBody(resp);
   // 登录响应是明文 "0|..." 格式
   if (/^[0-9]\|/.test(text.trim()) || /^[0-9]$/.test(text.trim())) return text.trim();
   // 其他响应是加密 hex
@@ -280,11 +295,10 @@ async function detectApiBase(ctx, cfg) {
   // 尝试 /api 和 /fh_api，取先响应的
   for (const base of ['/api/tmp', '/fh_api/tmp']) {
     try {
-      const r = await ctx.http.get(
+      const t = await httpGet(ctx,
         `http://${cfg.host}${base}/FHNCAPIS?ajaxmethod=get_refresh_sessionid`,
-        { headers: referer(cfg.host) }
+        referer(cfg.host)
       );
-      const t = await r.text();
       if (t.includes('sessionid')) {
         cfg._apiBase = base;
         return base;
@@ -354,7 +368,7 @@ async function ztePost(ctx, cfg, calls, token) {
     `http://${cfg.zteHost}/ubus/?t=${Date.now()}`,
     { headers: { 'Content-Type': 'application/json' }, body }
   );
-  const text = await resp.text();
+  const text = await respBody(resp);
   const arr = JSON.parse(text);
   return arr.map(r => (r.result?.[0] === 0 ? r.result[1] : null));
 }
@@ -497,11 +511,10 @@ async function detectDevice(ctx, cfg) {
   // 先探 FH（sessionid 接口）
   for (const base of ['/api/tmp', '/fh_api/tmp']) {
     try {
-      const r = await ctx.http.get(
+      const t = await httpGet(ctx,
         `http://${cfg.host}${base}/FHNCAPIS?ajaxmethod=get_refresh_sessionid`,
-        { headers: { 'X-Requested-With': 'XMLHttpRequest' } }
+        { 'X-Requested-With': 'XMLHttpRequest', 'Cache-Control': 'no-cache' }
       );
-      const t = await r.text();
       if (t.includes('sessionid')) {
         cfg._apiBase = base;
         ctx.storage.set('device_type', 'fh');
