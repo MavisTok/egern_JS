@@ -963,8 +963,8 @@ function addNode(parent, spec) {
           sym.applyFont(Font.systemFont(sz));
           const el = parent.addImage(sym.image);
           if (spec.color) el.tintColor = new Color(spec.color);
+          el.resizable = true;
           el.imageSize = new Size(sz, spec.height || sz);
-          el.resizable = false;
         }
       }
       break;
