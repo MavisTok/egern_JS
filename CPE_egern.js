@@ -18,13 +18,14 @@
 
 function getConfig(ctx) {
   return {
-    host:    ctx.env.CPE_HOST  || '192.168.8.1',
-    user:    ctx.env.CPE_USER  || 'useradmin',
-    pass:    ctx.env.CPE_PASS  || '',
-    api:     ctx.env.CPE_API   || '',
-    zteHost: ctx.env.ZTE_HOST  || '192.168.0.1',
-    ztePass: ctx.env.ZTE_PASS  || '',
-    cpeType: ctx.env.CPE_TYPE  || 'auto',
+    host:    ctx.env.CPE_HOST    || '192.168.8.1',
+    user:    ctx.env.CPE_USER    || 'useradmin',
+    pass:    ctx.env.CPE_PASS    || '',
+    api:     ctx.env.CPE_API     || '',
+    zteHost: ctx.env.ZTE_HOST    || '192.168.0.1',
+    ztePass: ctx.env.ZTE_PASS    || '',
+    cpeType: ctx.env.CPE_TYPE    || 'auto',
+    refresh: Number(ctx.env.CPE_REFRESH) || 60,  // 刷新间隔（秒），默认 60s
   };
 }
 
@@ -634,7 +635,7 @@ function calcSpeed(ctx, traffic) {
   ctx.storage.setJSON('prev_traffic', { ...traffic, ts: now });
   if (!prev?.ts) return { up:0, down:0 };
   const dt = (now - prev.ts) / 1000;
-  if (dt <= 0 || dt > 300) return { up:0, down:0 };
+  if (dt <= 0 || dt > 1800) return { up:0, down:0 };  // 允许最长 30 分钟间隔
   return {
     up:   Math.max(0, (traffic.txBytes - prev.txBytes) / dt),
     down: Math.max(0, (traffic.rxBytes - prev.rxBytes) / dt),
@@ -676,13 +677,31 @@ function signalLabel(v) {
 
 // ==================== 颜色 ====================
 
-const C = {
-  bg1:'#0F1923', bg2:'#162736',
-  title:'#5EC4E8', label:'#7A8FA0', value:'#E8ECF0',
-  up:'#FF6B6B', down:'#51CF66', accent:'#5EC4E8', dim:'#4A5C6A',
-};
+function getColors(dark) {
+  return dark ? {
+    bg1:'#0F1923', bg2:'#162736',
+    title:'#5EC4E8', label:'#7A8FA0', value:'#E8ECF0',
+    up:'#FF6B6B', down:'#51CF66', accent:'#5EC4E8', dim:'#4A5C6A',
+    badgeFhBg:'#0A1E2E', badgeZteBg:'#2A2000', divider:'#1E3040',
+    gradient:['#0F1923','#0D1520'],
+  } : {
+    bg1:'#F2F6FA', bg2:'#E4ECF4',
+    title:'#1A7AB5', label:'#6B7C8D', value:'#1A2B3C',
+    up:'#C0392B', down:'#27AE60', accent:'#1A7AB5', dim:'#8A9BAC',
+    badgeFhBg:'#D0EAFB', badgeZteBg:'#FFF3CC', divider:'#C8D8E8',
+    gradient:['#F2F6FA','#E8EFF8'],
+  };
+}
+
+let C = getColors(true);
 
 // ==================== 组件 ====================
+
+function getBG() {
+  return { type:'linear', colors:C.gradient, startPoint:{x:0,y:0}, endPoint:{x:0.5,y:1} };
+}
+
+let BG = getBG();
 
 const dot = (rsrp, sz=10) => ({ type:'stack', width:sz, height:sz, borderRadius:sz/2, backgroundColor:rsrpColor(rsrp) });
 
@@ -722,7 +741,7 @@ const speedBlock = (dir, bps, color) => {
 const brandBadge = (brand) => ({
   type:'text', text:brand, font:{size:'caption2',weight:'bold'},
   textColor: brand==='ZTE' ? '#F7B731' : '#5EC4E8',
-  backgroundColor: brand==='ZTE' ? '#2A2000' : '#0A1E2E',
+  backgroundColor: brand==='ZTE' ? C.badgeZteBg : C.badgeFhBg,
   padding:[1,5], borderRadius:4,
 });
 
@@ -739,8 +758,6 @@ const titleRow = (wan, sig, sz, brand) => ({
 });
 
 // ==================== Widget 构建 ====================
-
-const BG = { type:'linear', colors:[C.bg1,'#0D1520'], startPoint:{x:0,y:0}, endPoint:{x:0.5,y:1} };
 
 function buildSmall(wan, speed, sig, brand) {
   const f = (v,u) => v != null ? `${v} ${u}` : '--';
@@ -798,7 +815,7 @@ function buildLarge(wan, speed, sig, brand) {
     children:[
       titleRow(wan, sig, 22, brand),
       { type:'stack', direction:'row', gap:12, children:[speedBlock('up',speed.up,C.up), speedBlock('down',speed.down,C.down)] },
-      { type:'stack', height:1, backgroundColor:C.bg2 },
+      { type:'stack', height:1, backgroundColor:C.divider },
       { type:'stack', direction:'column', gap:5, children:[
         { type:'stack', direction:'row', alignItems:'center', gap:6, children:[
           dot(sig.rsrp, 12),
@@ -822,7 +839,7 @@ function buildLarge(wan, speed, sig, brand) {
         sig.cellId ? infoRow('number', 'Cell ID', sig.cellId) : null,
         sig.qci    ? sigRow('QCI', sig.qci) : null,
       ].filter(Boolean)},
-      { type:'stack', height:1, backgroundColor:C.bg2 },
+      { type:'stack', height:1, backgroundColor:C.divider },
       { type:'stack', direction:'row', alignItems:'center', gap:6, children:[
         wan.carrier ? { type:'text', text:wan.carrier, font:{size:'caption2'}, textColor:C.label } : null,
         { type:'spacer' },
@@ -862,18 +879,26 @@ function buildError(msg) {
 
 export default async function(ctx) {
   const cfg = getConfig(ctx);
+  C = getColors(ctx.appearance !== 'light');
+  BG = getBG();
   try {
     const { wan, traffic, signal, brand } = await fetchAllData(ctx, cfg);
     const speed = calcSpeed(ctx, traffic);
     const f = ctx.widgetFamily;
+    let spec;
     if (f==='accessoryRectangular'||f==='accessoryInline'||f==='accessoryCircular')
-      return buildAccessory(speed, signal);
-    if (f==='systemLarge'||f==='systemExtraLarge')
-      return buildLarge(wan, speed, signal, brand);
-    if (f==='systemMedium')
-      return buildMedium(wan, speed, signal, brand);
-    return buildSmall(wan, speed, signal, brand);
+      spec = buildAccessory(speed, signal);
+    else if (f==='systemLarge'||f==='systemExtraLarge')
+      spec = buildLarge(wan, speed, signal, brand);
+    else if (f==='systemMedium')
+      spec = buildMedium(wan, speed, signal, brand);
+    else
+      spec = buildSmall(wan, speed, signal, brand);
+    spec.refreshInterval = cfg.refresh;
+    return spec;
   } catch(e) {
-    return buildError(e.message || '连接失败');
+    const spec = buildError(e.message || '连接失败');
+    spec.refreshInterval = cfg.refresh;
+    return spec;
   }
 }

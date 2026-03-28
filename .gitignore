@@ -1,2 +1,5 @@
 *.har
 debug.html
+CLAUDE.md
+.claude/
+.vscode/
