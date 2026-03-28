@@ -227,6 +227,8 @@ function aesCbcDecryptHex(hexStr, keyStr) {
 const COMMON_HEADERS = {
   'X-Requested-With': 'XMLHttpRequest',
   'Accept': 'application/json, text/plain, */*',
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache',
 };
 
 function referer(host) {
@@ -235,7 +237,8 @@ function referer(host) {
 
 /** GET 请求，若返回 HTML 或非 JSON 则抛出登录错误 */
 async function fhGet(ctx, cfg, path) {
-  const resp = await ctx.http.get(`http://${cfg.host}${path}`, { headers: referer(cfg.host) });
+  const sep = path.includes('?') ? '&' : '?';
+  const resp = await ctx.http.get(`http://${cfg.host}${path}${sep}_t=${Date.now()}`, { headers: referer(cfg.host) });
   const text = await resp.text();
   const t = text.trim();
   if (t.startsWith('<') || t === '' || t === '0') throw new Error('AUTH_REQUIRED');
